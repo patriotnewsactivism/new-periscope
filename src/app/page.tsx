@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { DiscoveryMap } from '@/components/DiscoveryMap';
+import DiscoveryMap from '@/components/DiscoveryMap';
 import { Button } from '@/components/ui/button';
 
 export default function Home() {

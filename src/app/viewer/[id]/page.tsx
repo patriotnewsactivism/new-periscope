@@ -1,4 +1,6 @@
-import { Viewer } from '@/components/Viewer';
+import Viewer from '@/components/Viewer';
+import { getStream } from '@/actions/getStream';
+import { notFound } from 'next/navigation';
 
 interface ViewerPageProps {
   params: {
@@ -6,6 +8,21 @@ interface ViewerPageProps {
   };
 }
 
-export default function ViewerPage({ params }: ViewerPageProps) {
-  return <Viewer streamId={params.id} />;
+export default async function ViewerPage({ params }: ViewerPageProps) {
+  const stream = await getStream(params.id);
+
+  if (!stream) {
+    notFound();
+  }
+
+  return (
+    <div className="h-screen w-screen bg-black">
+      <Viewer 
+        streamId={stream.id} 
+        muxPlaybackId={stream.mux_playback_id}
+        title={stream.title}
+        description={stream.description}
+      />
+    </div>
+  );
 }
