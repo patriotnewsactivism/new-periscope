@@ -4,6 +4,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Periscope Clone - Live Streaming Platform',
   description: 'A modern live streaming platform built with Next.js and Mux',
+  icons: {
+    icon: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({
