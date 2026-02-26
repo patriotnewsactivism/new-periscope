@@ -22,6 +22,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tailwindcss-animate": "^1.0.7",
+    "timesync": "^1.0.11",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

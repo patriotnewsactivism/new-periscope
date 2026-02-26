@@ -1,6 +1,8 @@
 import Link from 'next/link';
-import DiscoveryMap from '@/components/DiscoveryMap';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
+
+const DiscoveryMap = dynamic(() => import('@/components/DiscoveryMap'), { ssr: false });
 
 export default function Home() {
   return (

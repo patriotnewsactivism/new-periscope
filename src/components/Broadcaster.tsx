@@ -5,7 +5,10 @@ import { Camera, X, Mic, MicOff, AlertCircle, MapPin, Clock, Settings, Wifi, Shi
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { startBroadcast } from '@/actions/startBroadcast';
+import { stopBroadcast } from '@/actions/stopBroadcast';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/utils/supabase/client';
+import timesync from 'timesync';
 
 // --- Types ---
 interface GPSData {
@@ -16,6 +19,7 @@ interface GPSData {
 
 export default function Broadcaster() {
   const router = useRouter();
+  const supabase = createClient();
   
   // --- Refs ---
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -24,14 +28,47 @@ export default function Broadcaster() {
   const animationRef = useRef<number>();
   const gpsWatchIdRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
+  const tsRef = useRef<any>(null);
+
+  // --- Initialize TimeSync ---
+  useEffect(() => {
+    tsRef.current = timesync.create({
+      server: '/api/timesync',
+      interval: 10000
+    });
+
+    return () => {
+      if (tsRef.current) tsRef.current.destroy();
+    };
+  }, []);
 
   // --- State ---
   const [isActive, setIsActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'streaming' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'streaming' | 'error' | 'stopping'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [gpsData, setGpsData] = useState<GPSData | null>(null);
   const [broadcastInfo, setBroadcastInfo] = useState<any>(null);
+  const [hearts, setHearts] = useState<{ id: number; x: number }[]>([])
+
+  // --- Real-time Hearts ---
+  useEffect(() => {
+    if (!isActive || !broadcastInfo?.id || !supabase) return;
+
+    const channel = supabase
+      .channel(`hearts-${broadcastInfo.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hearts', filter: `stream_id=eq.${broadcastInfo.id}` }, 
+        (payload: any) => {
+          const id = Date.now();
+          const x = Math.random() * 80 - 40;
+          setHearts(prev => [...prev, { id, x }]);
+          setTimeout(() => setHearts(prev => prev.filter(h => h.id !== id)), 2000);
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); }
+  }, [isActive, broadcastInfo, supabase]);
 
   // --- GPS Tracking ---
   const startGpsTracking = useCallback(() => {
@@ -79,7 +116,7 @@ export default function Broadcaster() {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
     
     // Timestamp (Bottom Left)
-    const now = new Date();
+    const now = tsRef.current ? new Date(tsRef.current.now()) : new Date();
     const timeStr = now.toISOString();
     ctx.font = 'bold 14px monospace';
     const timeMetrics = ctx.measureText(timeStr);
@@ -113,6 +150,7 @@ export default function Broadcaster() {
   const handleStartBroadcast = async () => {
     try {
       setStatus('loading');
+      setError(null);
       
       // 1. Get User Media
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -128,11 +166,17 @@ export default function Broadcaster() {
         "Verified investigative journalism feed.", 
         "user-123" // Replace with real user ID from auth
       );
+      
+      if (!info || !info.streamKey) {
+        throw new Error("Failed to initialize broadcast stream. Please check configuration.");
+      }
+      
       setBroadcastInfo(info);
 
       // 3. Start Overlays & Loop
       setIsActive(true);
       startGpsTracking();
+      startTimeRef.current = Date.now(); // Track start time for duration
       setStatus('streaming');
       
       // Note: In a real implementation, we would use a library like 
@@ -140,19 +184,49 @@ export default function Broadcaster() {
       console.log("Broadcasting started to Mux with Key:", info.streamKey);
 
     } catch (err: any) {
-      setError(err.message);
+      console.error("Broadcast Error:", err);
+      setError(err.message || "Failed to start broadcast. Please try again.");
       setStatus('error');
     }
   };
 
-  const stopBroadcast = () => {
-    setIsActive(false);
-    stopGpsTracking();
-    if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+  const handleStopBroadcast = async () => {
+    if (!broadcastInfo) return;
+    
+    try {
+        setStatus('stopping');
+        
+        // Calculate duration
+        const duration = Date.now() - startTimeRef.current;
+        
+        // Stop local tracking
+        setIsActive(false);
+        stopGpsTracking();
+        if (animationRef.current) cancelAnimationFrame(animationRef.current);
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+        }
+        
+        // Call server action to archive and log
+        await stopBroadcast(
+            broadcastInfo.id, 
+            broadcastInfo.streamId, 
+            "user-123", // Replace with real user ID
+            { 
+                gps: gpsData,
+                duration: duration
+            }
+        );
+        
+        setStatus('idle');
+        setBroadcastInfo(null);
+        router.push('/');
+        
+    } catch (err: any) {
+        console.error("Stop Broadcast Error:", err);
+        setError(err.message || "Failed to stop broadcast cleanly.");
+        setStatus('error');
     }
-    setStatus('idle');
   };
 
   useEffect(() => {
@@ -171,13 +245,31 @@ export default function Broadcaster() {
         {/* Burned-in Canvas Output */}
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover" />
 
+        {/* Floating Hearts */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+            <AnimatePresence>
+                {hearts.map(heart => (
+                    <motion.div
+                        key={heart.id}
+                        initial={{ opacity: 1, y: "80vh", x: `calc(50% + ${heart.x}px)`, scale: 0.5 }}
+                        animate={{ opacity: 0, y: "20vh", x: `calc(50% + ${heart.x * 2}px)`, scale: 1.5 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 2, ease: "easeOut" }}
+                        className="absolute"
+                    >
+                        <Heart className="w-8 h-8 fill-red-500 text-red-500 drop-shadow-lg" />
+                    </motion.div>
+                ))}
+            </AnimatePresence>
+        </div>
+
         {/* UI Overlays */}
-        <div className="relative z-10 flex flex-col h-full pointer-events-none">
+        <div className="relative z-30 flex flex-col h-full pointer-events-none">
           
           {/* Top Bar */}
           <div className="p-4 flex justify-between items-start bg-gradient-to-b from-black/60 to-transparent">
             <div className="flex items-center gap-2">
-              <div className="h-3 w-3 rounded-full bg-red-600 animate-pulse" />
+              <div className={cn("h-3 w-3 rounded-full animate-pulse", status === 'streaming' ? "bg-red-600" : "bg-slate-500")} />
               <span className="text-white text-xs font-black uppercase tracking-tighter">REC</span>
               {status === 'streaming' && (
                 <div className="ml-2 px-2 py-0.5 bg-blue-600 rounded text-[10px] font-bold text-white uppercase">Live</div>
@@ -221,7 +313,7 @@ export default function Broadcaster() {
                   {isMuted ? <MicOff /> : <Mic />}
                 </button>
                 <button 
-                  onClick={stopBroadcast}
+                  onClick={handleStopBroadcast}
                   className="flex-1 py-4 bg-white text-black font-black rounded-xl shadow-lg active:scale-95 transition-transform"
                 >
                   STOP BROADCAST
@@ -235,11 +327,26 @@ export default function Broadcaster() {
                 <p className="text-white text-xs mt-2 font-bold uppercase tracking-widest">Initializing...</p>
               </div>
             )}
+            
+            {status === 'stopping' && (
+              <div className="text-center py-4">
+                <div className="animate-spin h-8 w-8 border-4 border-red-500 border-t-transparent rounded-full mx-auto" />
+                <p className="text-white text-xs mt-2 font-bold uppercase tracking-widest">Finishing & Archiving...</p>
+              </div>
+            )}
 
             {status === 'error' && (
-              <div className="p-4 bg-red-950/50 border border-red-500 rounded-lg">
-                <p className="text-red-200 text-xs">{error || "Connection failed."}</p>
-                <button onClick={() => setStatus('idle')} className="mt-2 text-white text-[10px] font-bold underline pointer-events-auto">TRY AGAIN</button>
+              <div className="p-4 bg-red-950/80 backdrop-blur-md border border-red-500 rounded-lg pointer-events-auto">
+                <div className="flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                    <div>
+                        <h3 className="text-red-200 font-bold text-xs">Broadcast Failed</h3>
+                        <p className="text-red-200/80 text-[10px] mt-1">{error || "Connection failed. Please check your network and try again."}</p>
+                    </div>
+                </div>
+                <button onClick={() => setStatus('idle')} className="w-full mt-3 py-2 bg-red-900/50 hover:bg-red-900 text-white text-xs font-bold rounded border border-red-800">
+                    DISMISS
+                </button>
               </div>
             )}
 

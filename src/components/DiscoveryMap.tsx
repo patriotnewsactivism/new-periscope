@@ -1,10 +1,12 @@
 "use client"
 
 import React, { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import MapPreview from './MapPreview';
 
 // Types
 type Stream = {
@@ -25,6 +27,7 @@ const DiscoveryMap: React.FC = () => {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const [streams, setStreams] = useState<Stream[]>([]);
+  const popupRef = useRef<mapboxgl.Popup | null>(null);
 
   // Initialize Map
   useEffect(() => {
@@ -95,12 +98,48 @@ const DiscoveryMap: React.FC = () => {
       el.style.border = '2px solid white';
       el.style.cursor = 'pointer';
 
+      // Create Marker
       const marker = new mapboxgl.Marker(el)
         .setLngLat([lng, lat])
         .addTo(map);
 
-      el.addEventListener('click', () => {
-        router.push(`/viewer/${stream.id}`);
+      // Handle Click -> Show Preview Popup
+      el.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent map click
+
+        if (popupRef.current) popupRef.current.remove();
+
+        const popupNode = document.createElement('div');
+        const root = createRoot(popupNode);
+        
+        // Render preview component
+        root.render(
+          <MapPreview 
+            playbackId={stream.mux_playback_id}
+            title={stream.title}
+            viewerCount={120} // Placeholder, replace with real data
+            onClose={() => {
+               popupRef.current?.remove();
+            }}
+          />
+        );
+
+        const popup = new mapboxgl.Popup({
+            offset: 25,
+            closeButton: false,
+            className: 'custom-popup-class', // We can style this in global css
+            maxWidth: '300px'
+        })
+        .setLngLat([lng, lat])
+        .setDOMContent(popupNode)
+        .addTo(map);
+
+        popupRef.current = popup;
+        
+        // Clean up React root on popup close
+        popup.on('close', () => {
+            setTimeout(() => root.unmount(), 0);
+        });
       });
 
       markersRef.current.push(marker);
@@ -111,7 +150,7 @@ const DiscoveryMap: React.FC = () => {
     <div className="relative w-full h-[600px] rounded-xl overflow-hidden shadow-2xl border border-slate-800">
       <div ref={mapContainerRef} className="absolute inset-0" />
       {streams.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-10">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-10 pointer-events-none">
           <p className="text-white/60 text-sm font-medium">Scanning for live broadcasts...</p>
         </div>
       )}
