@@ -8,7 +8,8 @@ import { startBroadcast } from '@/actions/startBroadcast';
 import { stopBroadcast } from '@/actions/stopBroadcast';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
-import timesync from 'timesync';
+import * as timesync from 'timesync';
+import type { TimeSyncInstance } from 'timesync';
 
 // --- Types ---
 interface GPSData {
@@ -28,14 +29,21 @@ export default function Broadcaster() {
   const animationRef = useRef<number>();
   const gpsWatchIdRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
-  const tsRef = useRef<any>(null);
+  const tsRef = useRef<TimeSyncInstance | null>(null);
 
   // --- Initialize TimeSync ---
   useEffect(() => {
-    tsRef.current = timesync.create({
-      server: '/api/timesync',
-      interval: 10000
-    });
+    try {
+      if (typeof timesync.create === 'function') {
+        tsRef.current = timesync.create({
+          server: '/api/timesync',
+          interval: 10000
+        });
+      }
+    } catch (syncError) {
+      console.warn('Time sync initialization failed, falling back to local clock.', syncError);
+      tsRef.current = null;
+    }
 
     return () => {
       if (tsRef.current) tsRef.current.destroy();
@@ -116,7 +124,7 @@ export default function Broadcaster() {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
     
     // Timestamp (Bottom Left)
-    const now = tsRef.current ? new Date(tsRef.current.now()) : new Date();
+    const now = tsRef.current?.now ? new Date(tsRef.current.now()) : new Date();
     const timeStr = now.toISOString();
     ctx.font = 'bold 14px monospace';
     const timeMetrics = ctx.measureText(timeStr);
