@@ -8,7 +8,7 @@ import { startBroadcast } from '@/actions/startBroadcast';
 import { stopBroadcast } from '@/actions/stopBroadcast';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
-import timesync from 'timesync';
+import * as timesync from 'timesync';
 
 // --- Types ---
 interface GPSData {
